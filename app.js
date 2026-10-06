@@ -15,7 +15,7 @@ const S = {
   tab: 'recipes',
   course: 'All',
   cui: '', lvl: '', tag: '',
-  group: Store.get('group', 'course'),   // 'course' | 'cuisine' | 'level'
+  group: Store.get('view', 'rated'),     // 'rated' | 'course' | 'cuisine' | 'level'
   q: '',
   saved: new Set(Store.get('saved', [])),
   made: Store.get('made', {}),
@@ -28,7 +28,7 @@ const S = {
 const save = () => {
   Store.set('saved', [...S.saved]); Store.set('made', S.made); Store.set('shop', S.shop);
   Store.set('mine', S.mine); Store.set('kind', S.kind); Store.set('dog', S.dog);
-  Store.set('group', S.group); Store.set('wish', S.wish);
+  Store.set('view', S.group); Store.set('wish', S.wish);
 };
 
 const all = () => [...RECIPES, ...S.mine];
@@ -113,6 +113,11 @@ function render() {
 
 /* ---------- recipes list ---------- */
 const cuisineOf = r => CUISINE_INFO.find(c => c.id === r.cuisine);
+/* Rank by a weighted rating, so 4.9★ from 12 people doesn't outrank 4.8★
+   from 2,000: every recipe starts as if 50 people had rated it 4.0. */
+const score = r => r.rating ? (r.rating * r.ratings + 4.0 * 50) / (r.ratings + 50) : 0;
+const fmtCount = n => n >= 1000 ? (n / 1000).toFixed(n >= 10000 ? 0 : 1).replace(/\.0$/, '') + 'k' : String(n);
+const stars = r => r.rating ? `<span class="rate">★ ${r.rating.toFixed(1)}</span> <span class="rc">(${fmtCount(r.ratings)})</span>` : (r.mine ? '' : '<span class="rc">Simmer original</span>');
 /* Recipes added before courses existed carried a meal (Lunch/Dinner). */
 const courseOf = r => r.course || ({ Lunch: 'Main', Dinner: 'Main' }[r.meal] || r.meal || 'Main');
 const coursesFor = kind => kind === 'human' ? COURSES : DOG_COURSES;
@@ -136,14 +141,19 @@ function card(r) {
     <div class="body">
       <div class="t">${esc(r.title)} ${S.saved.has(r.id) ? '<span class="star">★</span>' : ''}</div>
       <div class="b">${esc(r.blurb || '')}</div>
-      <div class="meta"><span>${LEVEL_ICON[lv]} ${lv}</span><span>⏱ ${r.time} min${r.wait ? ' +' : ''}</span>${c ? `<span>${c.emoji} ${esc(c.name)}</span>` : ''}${n ? `<span>✓ made ${n}×</span>` : ''}</div>
+      <div class="meta">${stars(r) ? `<span>${stars(r)}</span>` : ''}<span>${LEVEL_ICON[lv]} ${lv}</span><span>⏱ ${r.time} min${r.wait ? ' +' : ''}</span>${c ? `<span>${c.emoji} ${esc(c.name)}</span>` : ''}${n ? `<span>✓ made ${n}×</span>` : ''}</div>
     </div></button>`;
 }
 /* Split a list into titled sections for the chosen "group by". Within a
    section: easiest first, then quickest. */
 function grouped(list) {
-  const byLevel = (a, b) => LEVELS.indexOf(a.level || 'Easy') - LEVELS.indexOf(b.level || 'Easy') || a.time - b.time;
+  const byLevel = (a, b) => score(b) - score(a) || LEVELS.indexOf(a.level || 'Easy') - LEVELS.indexOf(b.level || 'Easy') || a.time - b.time;
   let keys, keyOf, title;
+  if (S.group === 'rated') {
+    const ranked = [...list].sort((a, b) => score(b) - score(a));
+    return `<h2 class="group">⭐ Best reviewed first <span class="count">${ranked.length}</span></h2>
+      <p class="sub" style="margin-top:-4px">Ranked by star rating, weighted by how many people rated it.</p><div class="grid">${ranked.map(card).join('')}</div>`;
+  }
   if (S.group === 'level') { keys = LEVELS; keyOf = r => r.level || 'Easy'; title = k => `${LEVEL_ICON[k]} ${k}`; }
   else if (S.group === 'cuisine' && S.kind === 'human') {
     keys = [...CUISINE_INFO.map(c => c.id), '']; keyOf = r => cuisineOf(r) ? r.cuisine : '';
@@ -159,7 +169,7 @@ function viewRecipes() {
   const human = S.kind === 'human';
   const title = human ? 'Healthy recipes' : 'Dog kitchen';
   const sub = human
-    ? 'Simple, balanced meals with step-by-step cook mode. Every recipe is pork-free.'
+    ? 'The best-reviewed version of each dish, with step-by-step cook mode. Every recipe is pork-free.'
     : 'Treats, toppers and tummy-friendly meals. All dog-safe: no onion, garlic, salt or xylitol.';
   const opt = (v, cur, label) => `<option value="${esc(v)}" ${cur === v ? 'selected' : ''}>${esc(label)}</option>`;
   const filtered = S.course !== 'All' || S.cui || S.lvl || S.tag || S.q;
@@ -171,7 +181,7 @@ function viewRecipes() {
       <select id="f-lvl" aria-label="Difficulty">${opt('', S.lvl, '📶 Any level')}${LEVELS.map(l => opt(l, S.lvl, `${LEVEL_ICON[l]} ${l}`)).join('')}</select>
       <select id="f-tag" aria-label="Diet and tags">${opt('', S.tag, '🏷️ Any diet')}${tags.map(t => opt(t, S.tag, '#' + t)).join('')}</select>
     </div>
-    <div class="groupby"><span>Group by</span><div class="seg2">${[['course', 'Course'], ...(human ? [['cuisine', 'Cuisine']] : []), ['level', 'Difficulty']].map(([k, t]) =>
+    <div class="groupby"><span>Show</span><div class="seg2">${[['rated', '⭐ Top'], ['course', 'Course'], ...(human ? [['cuisine', 'Cuisine']] : []), ['level', 'Difficulty']].map(([k, t]) =>
       `<button data-group="${k}" class="${S.group === k || (k === 'course' && S.group === 'cuisine' && !human) ? 'on' : ''}">${t}</button>`).join('')}</div>
       ${filtered ? `<button class="btn ghost small" data-act="clear-filters">Clear</button>` : ''}</div>
     ${list.length ? grouped(list)
@@ -345,12 +355,14 @@ function drawRecipe() {
     : `<span>${cur.serves} serving${cur.serves > 1 ? 's' : ''}</span>`;
   const kcal = r.kcal ? (r.kind === 'dog'
       ? `≈ ${r.kcal} kcal per ${esc(r.kcalUnit || 'serving')}`
-      : `≈ ${r.kcal} kcal · ${r.protein} g protein per serving`) : '';
+      : `≈ ${r.kcal} kcal${r.protein ? ` · ${r.protein} g protein` : ''} per ${esc(r.kcalUnit || 'serving')}`) : '';
   const tips = (r.tips || []).map(t => `<div class="tip ${/never|toxic|deadly|call your vet|not for the dog/i.test(t) ? 'warn' : ''}">💡 ${esc(t)}</div>`).join('');
   openSheet(`
     <div class="hero"><div class="emo">${esc(r.emoji || '🍽️')}</div><div><h1>${esc(r.title)}</h1>
       <div class="meta"><span>⏱ ${r.time} min${r.wait ? ' + ' + esc(r.wait) : ''}</span><span>${esc(courseLabel(courseOf(r)))}</span><span>${LEVEL_ICON[r.level || 'Easy']} ${r.level || 'Easy'}</span>${cuisineOf(r) ? `<span>${cuisineOf(r).emoji} ${esc(cuisineOf(r).name)}</span>` : ''}</div></div></div>
     <p style="margin:0">${esc(r.blurb || '')}</p>
+    ${r.rating ? `<div class="srcline"><span class="rate">${'★'.repeat(Math.round(r.rating))}</span> <strong>${r.rating.toFixed(1)}</strong> from ${r.ratings.toLocaleString()} ratings on ${esc(r.source.site)}
+      · <a href="${esc(r.source.url)}" target="_blank" rel="noopener">original recipe ↗</a></div>` : ''}
     <div class="pills">${(r.tags || []).map(t => `<span class="pill">#${esc(t)}</span>`).join('')}</div>
     ${kcal ? `<div class="nutri">${kcal} (approx.)</div>` : ''}
     <div class="actions">

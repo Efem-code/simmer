@@ -12,6 +12,8 @@ for (const r of RECIPES) {
   if (r.kind === 'human' && !COURSES.includes(r.course)) errs.push(r.id + ': bad course');
   if (r.kind === 'dog' && !DOG_COURSES.includes(r.course)) errs.push(r.id + ': bad dog course');
   if (r.kind === 'human' && !CUISINE_INFO.some(c => c.id === r.cuisine)) errs.push(r.id + ': bad cuisine');
+  if (r.kind === 'human' && !(r.rating && r.ratings && r.source?.url)) errs.push(r.id + ': human recipes must carry a real rating and source');
+  if (r.rating && (r.rating > 5 || r.ratings < 1)) errs.push(r.id + ': odd rating');
 }
 const h = RECIPES.filter(r => r.kind === 'human'), count = k => Object.entries(h.reduce((a, r) => (a[r[k]] = (a[r[k]] || 0) + 1, a), {}));
 console.log(`${h.length} human, ${RECIPES.length - h.length} dog`);
