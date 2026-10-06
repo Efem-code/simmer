@@ -24,6 +24,7 @@ const S = {
   dog: Store.get('dog', { kg: '', stage: 'pup12' }),
   foodQ: '',
   wish: Store.get('wish', []),            // "recipes to add" requests
+  spin: { human: 'Main', dog: 'Treat', easy: false, res: null },
 };
 const save = () => {
   Store.set('saved', [...S.saved]); Store.set('made', S.made); Store.set('shop', S.shop);
@@ -99,6 +100,7 @@ function render() {
   const v = $('#view');
   document.querySelector('.fab')?.remove();
   if (S.tab === 'recipes') v.innerHTML = viewRecipes();
+  else if (S.tab === 'spin') { v.innerHTML = viewSpin(); bindSpin(); return; }
   else if (S.tab === 'saved') v.innerHTML = viewSaved();
   else if (S.tab === 'shop') v.innerHTML = viewShop();
   else v.innerHTML = S.kind === 'dog' ? viewDogGuide() : viewHumanGuide();
@@ -196,6 +198,95 @@ function viewSaved() {
     ${mine.length ? `<h2>Added by you</h2><div class="grid">${mine.map(card).join('')}</div>` : ''}
     ${viewWish()}`;
 }
+
+/* ---------- spin the wheel ----------
+   Can't decide what to cook? One wheel of recipes for the chosen course.
+   Tap the wheel, tap Spin, or shake the phone. */
+let wheel = null, spinning = false;
+/* Wheel slices are narrow: drop filler words so the dish name fits. */
+function shortName(t) {
+  let s = t.replace(/^(Super Easy|Super Simple|Easy|Perfect|Terrific|Curry Stand|Sean's|Double|Homemade|No-Bake|Groovy|Quick)\s+/i, '')
+    .replace(/\s+(with|from)\s.*$/i, '').replace(/\s*\(.*\)$/, '')
+    .replace(/\s+Dog (Treats|Biscuits)$/i, '').replace(/^Peanut Butter\b/, 'PB');
+  return s || t;
+}
+function spinPool(course) {
+  const k = S.kind;
+  return all().filter(r => r.kind === k && (course === 'All' || courseOf(r) === course) && (!S.spin.easy || (r.level || 'Easy') === 'Easy'));
+}
+function viewSpin() {
+  const k = S.kind, course = S.spin[k];
+  const courses = coursesFor(k).filter(c => all().filter(r => r.kind === k && courseOf(r) === c).length >= 2);
+  let pool = spinPool(course);
+  /* "Any" with 40+ dishes would be unreadable; use the 20 best reviewed. */
+  if (pool.length > 20) pool = [...pool].sort((a, b) => score(b) - score(a)).slice(0, 20);
+  S.spinPool = pool;
+  const r = S.spin.res && byId(S.spin.res);
+  return `<h1>${k === 'dog' ? 'Spin a dog treat' : 'Spin for a recipe'}</h1>
+    <p class="sub">Can’t decide what to make? Tap the wheel or shake your phone.</p>
+    <div class="chips">${['All', ...courses].map(c => `<button class="chip ${course === c ? 'on' : ''}" data-spin-course="${esc(c)}">${esc(c === 'All' ? 'Any' : courseLabel(c))}</button>`).join('')}
+      <button class="chip ${S.spin.easy ? 'on' : ''}" data-spin-easy>🟢 Easy only</button></div>
+    <div class="spin-wrap">
+      ${pool.length >= 2 ? `<div class="wheel-box"><div class="pointer"></div><canvas id="wheel" aria-label="Recipe wheel"></canvas></div>
+        <button class="btn spin-btn" id="spin-go">🎰 Spin</button>
+        <p class="hint" id="shake-hint">${shakeHint()}</p>`
+      : `<div class="empty">Not enough recipes here to spin — pick another course or turn off “Easy only”.</div>`}
+      <div id="spin-result">${r ? spinCard(r) : ''}</div>
+    </div>`;
+}
+function shakeHint() {
+  if (Spin.needPerm && !Spin.gotMotion) return `<button class="btn ghost small" id="enable-shake">📳 Turn on shake-to-spin</button>`;
+  return Spin.gotMotion ? '📳 Shake your phone to spin' : 'Tip: on a phone, shake to spin 📳';
+}
+function spinCard(r) {
+  const c = cuisineOf(r), lv = r.level || 'Easy';
+  return `<div class="card spin-card">
+    <div class="big">${esc(r.emoji || '🍽️')}</div>
+    <div class="what">${esc(r.title)}</div>
+    <div class="meta" style="justify-content:center">${stars(r) ? `<span>${stars(r)}</span>` : ''}<span>⏱ ${r.time} min${r.wait ? ' +' : ''}</span><span>${LEVEL_ICON[lv]} ${lv}</span>${c ? `<span>${c.emoji} ${esc(c.name)}</span>` : ''}</div>
+    <p style="margin:8px 0 0">${esc(r.blurb || '')}</p>
+    <div class="actions"><button class="btn" data-spin-act="open">📖 Open recipe</button><button class="btn ghost" data-spin-act="cook">▶ Cook it</button></div>
+  </div>`;
+}
+function bindSpin() {
+  document.querySelectorAll('[data-spin-course]').forEach(b => b.onclick = () => { S.spin[S.kind] = b.dataset.spinCourse; S.spin.res = null; render(); });
+  const easy = document.querySelector('[data-spin-easy]');
+  if (easy) easy.onclick = () => { S.spin.easy = !S.spin.easy; S.spin.res = null; render(); };
+  const cv = $('#wheel');
+  if (cv) {
+    wheel = new Wheel(cv, { ticks: true });
+    wheel.setItems(S.spinPool.map(r => ({ id: r.id, label: shortName(r.title), emoji: r.emoji })));
+    const i = S.spinPool.findIndex(r => r.id === S.spin.res); if (i >= 0) wheel.show(i);
+    cv.onclick = spinRecipe; $('#spin-go').onclick = spinRecipe;
+  } else wheel = null;
+  $('#enable-shake')?.addEventListener('click', async () => { if (await Spin.askPermission()) toast('Shake away! 📳'); $('#shake-hint').innerHTML = shakeHint(); });
+  bindSpinCard();
+}
+function bindSpinCard() {
+  document.querySelectorAll('[data-spin-act]').forEach(b => b.onclick = () => {
+    openRecipe(S.spin.res);
+    if (b.dataset.spinAct === 'cook') startCook();
+  });
+}
+async function spinRecipe() {
+  if (spinning || !wheel || S.tab !== 'spin') return;
+  spinning = true; Spin.audio();
+  const go = $('#spin-go'); go.disabled = true; go.textContent = '🎰 Spinning…';
+  $('#spin-result').innerHTML = '';
+  /* Don't land on the same dish twice in a row. */
+  let i = Math.floor(Math.random() * S.spinPool.length);
+  if (S.spinPool.length > 1 && S.spinPool[i].id === S.spin.res) i = (i + 1 + Math.floor(Math.random() * (S.spinPool.length - 1))) % S.spinPool.length;
+  await wheel.spinTo(i, 4300, 6);
+  spinning = false; Spin.ding();
+  S.spin.res = S.spinPool[i].id;
+  if (S.tab !== 'spin' || !$('#spin-result')) return;
+  go.disabled = false; go.textContent = '🎰 Spin again';
+  $('#spin-result').innerHTML = spinCard(S.spinPool[i]); bindSpinCard();
+  $('#spin-result').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+Spin.onShake = () => { if ($('#sheet').hidden && !cook) spinRecipe(); };
+Spin.onFirstMotion = () => { const h = $('#shake-hint'); if (h) h.innerHTML = shakeHint(); };
+addEventListener('resize', () => { if (wheel && wheel.c.isConnected) wheel.draw(); });
 
 /* ---------- recipes to add (wishlist) ----------
    Ideas for recipes to build into the app later. Share sends the list as
