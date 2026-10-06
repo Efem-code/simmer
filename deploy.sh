@@ -11,6 +11,9 @@ cd "$(dirname "$0")"
 say()  { printf '\n\033[1m%s\033[0m\n' "$*"; }
 note() { printf '  %s\n' "$*"; }
 
+say "0. Checking recipes"
+node check.js | tail -1
+
 say "1. Stamping this build"
 STAMP="$(date +%Y%m%d-%H%M%S)"
 sed -i '' "s/^const BUILD = '.*';/const BUILD = '$STAMP';/" sw.js
