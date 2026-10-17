@@ -64,6 +64,11 @@ def first_int(s):
     m = re.search(r'\d+', str(s or ''))
     return int(m.group()) if m else None
 
+# Allrecipes' best-reviewed Homemade Taco Seasoning Mix (★4.7, 527 ratings) —
+# about 2 tbsp, the same as one 1 oz packet. Used instead of packet mixes.
+TACO_SRC = 'https://www.allrecipes.com/recipe/222165/homemade-taco-seasoning-mix/'
+TACO_TIP = 'No packet mix: the spices are Allrecipes’ Homemade Taco Seasoning (★4.7, 527 ratings), about the same as one packet. Make a big jar of it for next time.'
+
 # Our metadata per recipe. key -> source id in .sources.json.
 # time = hands-on-ish minutes shown on cards; wait = passive time (optional).
 R = [
@@ -233,13 +238,17 @@ R = [
        tips=['Low-sodium soy sauce and brown rice make it lighter.']),
   dict(id='turkey-chili', src='turkey-chili', course='Main', cuisine='mexican', level='Easy', emoji='🌶️', title='Terrific Turkey Chili',
        time=70, tags=['high-protein', 'gluten-free', 'freezer'],
-       blurb='Taco-spiced turkey chili loaded with zucchini and peppers.',
-       steps=['Brown the turkey in 1 tbsp oil in a big pot, breaking it up, then season with the taco mix, coriander, oregano, chili flakes and tomato paste.',
+       blurb='Taco-spiced turkey chili loaded with zucchini and peppers — made with real spices, no packet.',
+       swap={'taco seasoning': [[2, 'tsp', 'chili powder'], [1.5, 'tsp', 'paprika'], [1, 'tsp', 'onion powder'], [0.5, 'tsp', 'sea salt'],
+                                [0.5, 'tsp', 'garlic powder'], [0.5, 'tsp', 'ground cumin'], [0.25, 'tsp', 'ground black pepper'], [None, '', 'pinch of cayenne pepper']],
+             'teaspoon dried oregano': [[1.5, 'tsp', 'dried oregano']]},
+       steps=['Mix the chili powder, paprika, onion powder, sea salt, garlic powder, cumin, black pepper and cayenne in a small bowl — this replaces the taco seasoning packet.',
+              'Brown the turkey in 1 tbsp oil in a big pot, breaking it up, then stir in the spice mix, coriander, oregano, chili flakes and tomato paste.',
               'Add the broth and simmer 5 minutes, then add the salsa, tomatoes and green chiles and simmer 10 minutes.',
               'Meanwhile cook the onion and pepper in 1 tbsp oil 5 minutes and add to the chili.',
               'Brown the zucchini in the last tbsp oil 5 minutes, add it, and simmer 15 minutes more.',
               'Top with sour cream, green onion and cheddar.'],
-       tips=['Greek yogurt instead of sour cream adds protein.', 'Check the taco seasoning label if you need it gluten-free.']),
+       tips=['Greek yogurt instead of sour cream adds protein.', TACO_TIP]),
   dict(id='shrimp-tacos', src='shrimp-tacos', course='Main', cuisine='mexican', level='Easy', emoji='🌮', title='Shrimp Tacos with Mango Salsa',
        time=50, tags=['high-protein'],
        blurb='Sweet-buttery shrimp with a fresh mango-avocado salsa.',
@@ -649,12 +658,16 @@ R = [
        tips=['Meal prep: bowls of rice or cauliflower rice, turkey, black beans, fresh tomato, lettuce and salsa.', 'Freezes 3 months.']),
   dict(id='salsa-chicken', src='salsa-chicken', course='Main', cuisine='mexican', level='Easy', emoji='🌯', title='Salsa Chicken Burrito Filling',
        time=35, keeps='4 days', tags=['high-protein', 'gluten-free', 'freezer'],
-       blurb='Shredded chicken simmered in salsa and spices — 107 kcal a serving.',
+       blurb='Shredded chicken simmered in salsa and real spices — 107 kcal a serving.',
+       swap={'taco seasoning': [[1.5, 'tsp', 'paprika'], [1, 'tsp', 'onion powder'], [0.5, 'tsp', 'sea salt'], [0.5, 'tsp', 'garlic powder'],
+                                [0.5, 'tsp', 'dried oregano'], [0.25, 'tsp', 'ground black pepper'], [None, '', 'pinch of cayenne pepper']],
+             'teaspoon ground cumin': [[1.5, 'tsp', 'ground cumin']],
+             'teaspoon chili powder': [[1, 'tbsp', 'chili powder']]},
        steps=['Put the chicken and tomato sauce in a saucepan over medium-high and bring to a boil.',
-              'Add the salsa, taco seasoning, cumin, garlic and chili powder and simmer 15 minutes.',
+              'Add the salsa, garlic and all the spices and simmer 15 minutes.',
               'Shred the chicken in the pan with two forks, cover and cook 5–10 minutes more.',
               'Add hot sauce to taste.'],
-       tips=['Meal prep: burrito bowls with brown rice, peppers, corn and avocado (add the avocado fresh).', 'Check the taco seasoning label if you need it gluten-free.']),
+       tips=['Meal prep: burrito bowls with brown rice, peppers, corn and avocado (add the avocado fresh).', TACO_TIP]),
   dict(id='curry-chicken-salad', src='curry-chicken-salad', course='Soup & Salad', cuisine='namerican', level='Easy', emoji='🍏', title='Fruited Curry Chicken Salad',
        time=15, keeps='3 days', tags=['high-protein', 'gluten-free', 'no-cook'],
        blurb='Chicken, apple, grapes, celery and pecans in a curry dressing.',
@@ -899,7 +912,14 @@ def js(v):
 
 def entry(m, kind):
     s = SRC[m['src']]
-    ing = [parse(x) for x in s['ing'] if not any(k in x for k in m.get('skip', []))]
+    ing = []
+    for x in s['ing']:
+        if any(k in x for k in m.get('skip', [])):
+            continue
+        # swap: replace a source line (matched by substring) with our own rows,
+        # e.g. a seasoning packet with the real spices.
+        hit = next((k for k in m.get('swap', {}) if k in x), None)
+        ing += m['swap'][hit] if hit else [parse(x)]
     ing = [[q, u, t.replace('rice wine vinegar', 'rice vinegar')] for q, u, t in ing]
     serves = first_int(s['yield']) or 1
     kcal = first_int(s.get('kcal'))
