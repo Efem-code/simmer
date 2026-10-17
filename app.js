@@ -14,7 +14,7 @@ const S = {
   kind: Store.get('kind', 'human'),
   tab: 'recipes',
   course: 'All',
-  cui: '', lvl: '', tag: '',
+  cui: '', lvl: '', tag: '', prep: false,
   group: Store.get('view', 'rated'),     // 'rated' | 'course' | 'cuisine' | 'level'
   q: '',
   saved: new Set(Store.get('saved', [])),
@@ -24,7 +24,7 @@ const S = {
   dog: Store.get('dog', { kg: '', stage: 'pup12' }),
   foodQ: '',
   wish: Store.get('wish', []),            // "recipes to add" requests
-  spin: { human: 'Main', dog: 'Treat', easy: false, res: null },
+  spin: { human: 'Main', dog: 'Treat', easy: false, prep: false, res: null },
 };
 const save = () => {
   Store.set('saved', [...S.saved]); Store.set('made', S.made); Store.set('shop', S.shop);
@@ -130,6 +130,7 @@ function matches(r) {
   if (S.cui && r.cuisine !== S.cui) return false;
   if (S.lvl && (r.level || 'Easy') !== S.lvl) return false;
   if (S.tag && !(r.tags || []).includes(S.tag)) return false;
+  if (S.prep && !r.keeps) return false;
   if (S.q) {
     const hay = [r.title, r.blurb, cuisineOf(r)?.name, courseOf(r), ...(r.tags || []), ...r.ingredients.map(i => i[2])].join(' ').toLowerCase();
     return S.q.toLowerCase().split(/\s+/).every(w => hay.includes(w));
@@ -143,7 +144,7 @@ function card(r) {
     <div class="body">
       <div class="t">${esc(r.title)} ${S.saved.has(r.id) ? '<span class="star">★</span>' : ''}</div>
       <div class="b">${esc(r.blurb || '')}</div>
-      <div class="meta">${stars(r) ? `<span>${stars(r)}</span>` : ''}<span>${LEVEL_ICON[lv]} ${lv}</span><span>⏱ ${r.time} min${r.wait ? ' +' : ''}</span>${c ? `<span>${c.emoji} ${esc(c.name)}</span>` : ''}${n ? `<span>✓ made ${n}×</span>` : ''}</div>
+      <div class="meta">${stars(r) ? `<span>${stars(r)}</span>` : ''}<span>${LEVEL_ICON[lv]} ${lv}</span><span>⏱ ${r.time} min${r.wait ? ' +' : ''}</span>${r.keeps ? '<span title="Good for meal prep">🥡</span>' : ''}${c ? `<span>${c.emoji} ${esc(c.name)}</span>` : ''}${n ? `<span>✓ made ${n}×</span>` : ''}</div>
     </div></button>`;
 }
 /* Split a list into titled sections for the chosen "group by". Within a
@@ -174,9 +175,12 @@ function viewRecipes() {
     ? 'The best-reviewed version of each dish, with step-by-step cook mode. Every recipe is pork-free.'
     : 'Treats, toppers and tummy-friendly meals. All dog-safe: no onion, garlic, salt or xylitol.';
   const opt = (v, cur, label) => `<option value="${esc(v)}" ${cur === v ? 'selected' : ''}>${esc(label)}</option>`;
-  const filtered = S.course !== 'All' || S.cui || S.lvl || S.tag || S.q;
+  const filtered = S.course !== 'All' || S.cui || S.lvl || S.tag || S.q || S.prep;
+  const prepN = pool.filter(r => r.keeps).length;
   return `<h1>${title}</h1><p class="sub">${sub}</p>
     <div class="search"><input id="q" type="search" placeholder="Search recipes or ingredients…" value="${esc(S.q)}" autocomplete="off"></div>
+    ${prepN ? `<div class="chips"><button class="chip prep ${S.prep ? 'on' : ''}" data-prep>🥡 Meal prep <span class="cnt">${prepN}</span></button>
+      <button class="chip ${S.lvl === 'Easy' ? 'on' : ''}" data-easy>🟢 Easy</button></div>` : ''}
     <div class="chips">${['All', ...coursesFor(S.kind)].map(m => `<button class="chip ${S.course === m ? 'on' : ''}" data-course="${esc(m)}">${esc(m === 'All' ? 'All' : courseLabel(m))}</button>`).join('')}</div>
     <div class="filters">
       ${human ? `<select id="f-cui" aria-label="Cuisine">${opt('', S.cui, '🌍 Any cuisine')}${CUISINE_INFO.filter(c => pool.some(r => r.cuisine === c.id)).map(c => opt(c.id, S.cui, `${c.emoji} ${c.name}`)).join('')}</select>` : ''}
@@ -212,7 +216,7 @@ function shortName(t) {
 }
 function spinPool(course) {
   const k = S.kind;
-  return all().filter(r => r.kind === k && (course === 'All' || courseOf(r) === course) && (!S.spin.easy || (r.level || 'Easy') === 'Easy'));
+  return all().filter(r => r.kind === k && (course === 'All' || courseOf(r) === course) && (!S.spin.easy || (r.level || 'Easy') === 'Easy') && (!S.spin.prep || r.keeps));
 }
 function viewSpin() {
   const k = S.kind, course = S.spin[k];
@@ -225,12 +229,13 @@ function viewSpin() {
   return `<h1>${k === 'dog' ? 'Spin a dog treat' : 'Spin for a recipe'}</h1>
     <p class="sub">Can’t decide what to make? Tap the wheel or shake your phone.</p>
     <div class="chips">${['All', ...courses].map(c => `<button class="chip ${course === c ? 'on' : ''}" data-spin-course="${esc(c)}">${esc(c === 'All' ? 'Any' : courseLabel(c))}</button>`).join('')}
-      <button class="chip ${S.spin.easy ? 'on' : ''}" data-spin-easy>🟢 Easy only</button></div>
+      <button class="chip ${S.spin.easy ? 'on' : ''}" data-spin-easy>🟢 Easy only</button>
+      ${k === 'human' ? `<button class="chip ${S.spin.prep ? 'on' : ''}" data-spin-prep>🥡 Meal prep</button>` : ''}</div>
     <div class="spin-wrap">
       ${pool.length >= 2 ? `<div class="wheel-box"><div class="pointer"></div><canvas id="wheel" aria-label="Recipe wheel"></canvas></div>
         <button class="btn spin-btn" id="spin-go">🎰 Spin</button>
         <p class="hint" id="shake-hint">${shakeHint()}</p>`
-      : `<div class="empty">Not enough recipes here to spin — pick another course or turn off “Easy only”.</div>`}
+      : `<div class="empty">Not enough recipes here to spin — pick another course or turn off a filter.</div>`}
       <div id="spin-result">${r ? spinCard(r) : ''}</div>
     </div>`;
 }
@@ -252,6 +257,8 @@ function bindSpin() {
   document.querySelectorAll('[data-spin-course]').forEach(b => b.onclick = () => { S.spin[S.kind] = b.dataset.spinCourse; S.spin.res = null; render(); });
   const easy = document.querySelector('[data-spin-easy]');
   if (easy) easy.onclick = () => { S.spin.easy = !S.spin.easy; S.spin.res = null; render(); };
+  const prep = document.querySelector('[data-spin-prep]');
+  if (prep) prep.onclick = () => { S.spin.prep = !S.spin.prep; S.spin.res = null; render(); };
   const cv = $('#wheel');
   if (cv) {
     wheel = new Wheel(cv, { ticks: true });
@@ -371,13 +378,20 @@ function viewDogGuide() {
     <h2>Can my dog eat…?</h2>
     <div class="search"><input id="food-q" type="search" placeholder="e.g. grapes, cheese, apple" value="${esc(S.foodQ)}" autocomplete="off"></div>
     <div class="card" id="food-list">${foodRows()}</div>
-    <h2>Ground rules</h2>${DOG_RULES.map(gcard).join('')}`;
+    <h2>Ground rules</h2>${DOG_RULES.map(gcard).join('')}
+    <h2>🇨🇦 Where to shop in Canada</h2>
+    <p class="sub">Found on Real Canadian Superstore and Safeway (Voilà) websites, Oct 2026. Save-On-Foods carries the same national brands.</p>
+    ${CA_SHOP.map(c => `<div class="card gcard"><h3>${esc(c.item)}</h3>${caNote(c)}</div>`).join('')}
+    <div class="card gcard"><h3>Kong & chew toys</h3><p>Grocery stores rarely stock Kongs — look in pet stores.</p></div>
+    <div class="card gcard"><h3>Fresh basics</h3><p>Carrots, sweet potatoes, green beans, blueberries, bananas, eggs, chicken breast, ground turkey and rice are in every store. Fresh is best — no seasoning, onion or garlic.</p></div>`;
 }
 
 /* ---------- events ---------- */
 function bind(v) {
   v.querySelectorAll('[data-open]').forEach(b => b.onclick = () => openRecipe(b.dataset.open));
   v.querySelectorAll('[data-course]').forEach(b => b.onclick = () => { S.course = b.dataset.course; render(); });
+  const pc = v.querySelector('[data-prep]'); if (pc) pc.onclick = () => { S.prep = !S.prep; render(); };
+  const ec = v.querySelector('[data-easy]'); if (ec) ec.onclick = () => { S.lvl = S.lvl === 'Easy' ? '' : 'Easy'; render(); };
   v.querySelectorAll('[data-group]').forEach(b => b.onclick = () => { S.group = b.dataset.group; save(); render(); });
   [['#f-cui', 'cui'], ['#f-lvl', 'lvl'], ['#f-tag', 'tag']].forEach(([sel, k]) => { const e = v.querySelector(sel); if (e) e.onchange = () => { S[k] = e.value; render(); }; });
   const wf = v.querySelector('#wish-form');
@@ -407,7 +421,7 @@ function bind(v) {
   if (fq) fq.oninput = () => { S.foodQ = fq.value; $('#food-list').innerHTML = foodRows(); };
 }
 function act(a) {
-  if (a === 'clear-filters') { S.course = 'All'; S.cui = ''; S.lvl = ''; S.tag = ''; S.q = ''; render(); return; }
+  if (a === 'clear-filters') { S.course = 'All'; S.cui = ''; S.lvl = ''; S.tag = ''; S.q = ''; S.prep = false; render(); return; }
   if (a === 'share-wish' || a === 'copy-wish') {
     const text = wishText();
     if (a === 'share-wish' && navigator.share) navigator.share({ title: 'Simmer — recipes to add', text }).catch(() => {});
@@ -423,6 +437,12 @@ function act(a) {
     return;
   }
   save(); render();
+}
+
+/* ---------- Canadian shopping notes (dog recipes) ---------- */
+const caFor = text => CA_SHOP.find(c => new RegExp(c.match, 'i').test(text));
+function caNote(c) {
+  return `<div class="ca">🇨🇦 <b>Superstore:</b> ${esc(c.superstore)}<br><b>Safeway:</b> ${esc(c.safeway)}${c.warn ? `<br><span class="w">⚠️ ${esc(c.warn)}</span>` : ''}</div>`;
 }
 
 /* ---------- recipe sheet ---------- */
@@ -456,6 +476,7 @@ function drawRecipe() {
       · <a href="${esc(r.source.url)}" target="_blank" rel="noopener">original recipe ↗</a></div>` : ''}
     <div class="pills">${(r.tags || []).map(t => `<span class="pill">#${esc(t)}</span>`).join('')}</div>
     ${kcal ? `<div class="nutri">${kcal} (approx.)</div>` : ''}
+    ${r.keeps ? `<div class="keeps">🥡 Meal prep: keeps ${esc(r.keeps)} in the fridge</div>` : ''}
     <div class="actions">
       <button class="btn wide" data-r="cook">▶ Start cooking</button>
     </div>
@@ -468,7 +489,8 @@ function drawRecipe() {
       <div class="stepper"><button data-r="minus" aria-label="Fewer">−</button>${amount}<button data-r="plus" aria-label="More">＋</button></div></div>
     <p class="nutri" style="margin:0 0 4px">Tap an ingredient to tick it off as you gather it.</p>
     <ul class="ing">${r.ingredients.map((row, i) => { const l = ingLine(row, f);
-      return `<li data-ing="${i}" class="${cur.got.has(i) ? 'got' : ''}"><span class="q">${esc(l.q)}</span><span>${esc(l.text)}</span></li>`; }).join('')}</ul>
+      const ca = r.kind === 'dog' && caFor(l.text);
+      return `<li data-ing="${i}" class="${cur.got.has(i) ? 'got' : ''}"><span class="q">${esc(l.q)}</span><span>${esc(l.text)}${ca ? caNote(ca) : ''}</span></li>`; }).join('')}</ul>
     <h2>Method</h2><ol class="steps">${r.steps.map(s => `<li>${esc(s)}</li>`).join('')}</ol>
     ${tips ? `<h2>Good to know</h2>${tips}` : ''}
     ${r.mine ? `<div class="actions"><button class="btn ghost" data-r="edit">✏️ Edit</button><button class="btn bad" data-r="delete">Delete recipe</button></div>` : ''}
@@ -493,7 +515,8 @@ function recipeAct(a) {
     const f = factor(); let n = 0;
     r.ingredients.forEach((row, i) => {
       if (cur.got.has(i) || row[0] == null && /to taste|salt and pepper|nothing else|^no /i.test(row[2])) return;
-      const l = ingLine(row, f); S.shop.push({ id: newId(), text: (l.q ? l.q + ' ' : '') + l.text, from: r.title, done: false }); n++;
+      const l = ingLine(row, f), ca = r.kind === 'dog' && caFor(l.text);
+      S.shop.push({ id: newId(), text: (l.q ? l.q + ' ' : '') + l.text, from: r.title + (ca ? ' · 🇨🇦 e.g. ' + ca.superstore.split(' · ')[0] + ' (Superstore)' : ''), done: false }); n++;
     });
     toast(`Added ${n} item${n === 1 ? '' : 's'} to the list` + (cur.got.size ? ' (skipped ticked ones)' : ''));
   }
