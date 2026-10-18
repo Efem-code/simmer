@@ -2,7 +2,7 @@
 /* BUILD is rewritten by deploy.sh on every deploy. It has to change or the
    browser sees an identical service worker, keeps the old one, and the update
    never reaches the phone. */
-const BUILD = '20261016-230323';
+const BUILD = '20261017-223818';
 const PREFIX = 'simmer-';
 const CACHE = PREFIX + BUILD;
 const SHELL = [

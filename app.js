@@ -14,7 +14,7 @@ const S = {
   kind: Store.get('kind', 'human'),
   tab: 'recipes',
   course: 'All',
-  cui: '', lvl: '', tag: '', prep: false,
+  cui: '', lvl: '', tag: '', prep: false, adv: false,
   group: Store.get('view', 'rated'),     // 'rated' | 'course' | 'cuisine' | 'level'
   q: '',
   saved: new Set(Store.get('saved', [])),
@@ -24,7 +24,7 @@ const S = {
   dog: Store.get('dog', { kg: '', stage: 'pup12' }),
   foodQ: '',
   wish: Store.get('wish', []),            // "recipes to add" requests
-  spin: { human: 'Main', dog: 'Treat', easy: false, prep: false, res: null },
+  spin: { human: 'Main', dog: 'Treat', easy: false, prep: false, adv: false, res: null },
 };
 const save = () => {
   Store.set('saved', [...S.saved]); Store.set('made', S.made); Store.set('shop', S.shop);
@@ -131,6 +131,7 @@ function matches(r) {
   if (S.lvl && (r.level || 'Easy') !== S.lvl) return false;
   if (S.tag && !(r.tags || []).includes(S.tag)) return false;
   if (S.prep && !r.keeps) return false;
+  if (S.adv && !(r.tags || []).includes('adventure')) return false;
   if (S.q) {
     const hay = [r.title, r.blurb, cuisineOf(r)?.name, courseOf(r), ...(r.tags || []), ...r.ingredients.map(i => i[2])].join(' ').toLowerCase();
     return S.q.toLowerCase().split(/\s+/).every(w => hay.includes(w));
@@ -165,6 +166,20 @@ function grouped(list) {
   return keys.map(k => [k, list.filter(r => keyOf(r) === k).sort(byLevel)]).filter(([, l]) => l.length)
     .map(([k, l]) => `<h2 class="group">${title(k)} <span class="count">${l.length}</span></h2><div class="grid">${l.map(card).join('')}</div>`).join('');
 }
+/* One adventurous dish a day, the same for everyone on that date, to tempt
+   people into trying something new. */
+function dishOfDay(pool) {
+  const adv = pool.filter(r => r.wow);
+  if (!adv.length) return '';
+  const d = new Date(), day = Math.floor((d - new Date(d.getFullYear(), 0, 0)) / 864e5);
+  const r = adv[(day + d.getFullYear()) % adv.length], c = cuisineOf(r);
+  return `<button class="card dotd" data-open="${esc(r.id)}">
+    <div class="lbl">✨ Dish of the day${c ? ` · ${c.emoji} ${esc(c.name)}` : ''}</div>
+    <div class="row"><div class="emo">${esc(r.emoji)}</div><div class="body"><div class="t">${esc(r.title)}</div>
+      <div class="w">${esc(r.wow)}</div>
+      <div class="meta">${stars(r) ? `<span>${stars(r)}</span>` : ''}<span>⏱ ${r.time} min${r.wait ? ' +' : ''}</span><span>${LEVEL_ICON[r.level || 'Easy']} ${r.level || 'Easy'}</span></div></div></div>
+    <div class="go">Let’s try it →</div></button>`;
+}
 function viewRecipes() {
   const pool = all().filter(r => r.kind === S.kind);
   const tags = [...new Set(pool.flatMap(r => r.tags || []))].sort();
@@ -175,11 +190,13 @@ function viewRecipes() {
     ? 'The best-reviewed version of each dish, with step-by-step cook mode. Every recipe is pork-free.'
     : 'Treats, toppers and tummy-friendly meals. All dog-safe: no onion, garlic, salt or xylitol.';
   const opt = (v, cur, label) => `<option value="${esc(v)}" ${cur === v ? 'selected' : ''}>${esc(label)}</option>`;
-  const filtered = S.course !== 'All' || S.cui || S.lvl || S.tag || S.q || S.prep;
+  const filtered = S.course !== 'All' || S.cui || S.lvl || S.tag || S.q || S.prep || S.adv;
+  const advN = pool.filter(r => (r.tags || []).includes('adventure')).length;
   const prepN = pool.filter(r => r.keeps).length;
   return `<h1>${title}</h1><p class="sub">${sub}</p>
     <div class="search"><input id="q" type="search" placeholder="Search recipes or ingredients…" value="${esc(S.q)}" autocomplete="off"></div>
-    ${prepN ? `<div class="chips"><button class="chip prep ${S.prep ? 'on' : ''}" data-prep>🥡 Meal prep <span class="cnt">${prepN}</span></button>
+    ${human && !filtered ? dishOfDay(pool) : ''}
+    ${prepN ? `<div class="chips">${advN ? `<button class="chip prep ${S.adv ? 'on' : ''}" data-adv>✨ Try something new <span class="cnt">${advN}</span></button>` : ''}<button class="chip prep ${S.prep ? 'on' : ''}" data-prep>🥡 Meal prep <span class="cnt">${prepN}</span></button>
       <button class="chip ${S.lvl === 'Easy' ? 'on' : ''}" data-easy>🟢 Easy</button></div>` : ''}
     <div class="chips">${['All', ...coursesFor(S.kind)].map(m => `<button class="chip ${S.course === m ? 'on' : ''}" data-course="${esc(m)}">${esc(m === 'All' ? 'All' : courseLabel(m))}</button>`).join('')}</div>
     <div class="filters">
@@ -209,14 +226,15 @@ function viewSaved() {
 let wheel = null, spinning = false;
 /* Wheel slices are narrow: drop filler words so the dish name fits. */
 function shortName(t) {
-  let s = t.replace(/^(Super Easy|Super Simple|Easy|Perfect|Terrific|Curry Stand|Sean's|Double|Homemade|No-Bake|Groovy|Quick)\s+/i, '')
+  let s = t.replace(/^(Chef )?[A-Z][a-z]+( [A-Z][a-z]+)?['’]s\s+/, '')
+    .replace(/^(Super Easy|Super Simple|Easy|Perfect|Terrific|Curry Stand|Double|Homemade|No-Bake|Groovy|Quick)\s+/i, '')
     .replace(/\s+(with|from)\s.*$/i, '').replace(/\s*\(.*\)$/, '')
     .replace(/\s+Dog (Treats|Biscuits)$/i, '').replace(/^Peanut Butter\b/, 'PB');
   return s || t;
 }
 function spinPool(course) {
   const k = S.kind;
-  return all().filter(r => r.kind === k && (course === 'All' || courseOf(r) === course) && (!S.spin.easy || (r.level || 'Easy') === 'Easy') && (!S.spin.prep || r.keeps));
+  return all().filter(r => r.kind === k && (course === 'All' || courseOf(r) === course) && (!S.spin.easy || (r.level || 'Easy') === 'Easy') && (!S.spin.prep || r.keeps) && (!S.spin.adv || (r.tags || []).includes('adventure')));
 }
 function viewSpin() {
   const k = S.kind, course = S.spin[k];
@@ -230,7 +248,7 @@ function viewSpin() {
     <p class="sub">Can’t decide what to make? Tap the wheel or shake your phone.</p>
     <div class="chips">${['All', ...courses].map(c => `<button class="chip ${course === c ? 'on' : ''}" data-spin-course="${esc(c)}">${esc(c === 'All' ? 'Any' : courseLabel(c))}</button>`).join('')}
       <button class="chip ${S.spin.easy ? 'on' : ''}" data-spin-easy>🟢 Easy only</button>
-      ${k === 'human' ? `<button class="chip ${S.spin.prep ? 'on' : ''}" data-spin-prep>🥡 Meal prep</button>` : ''}</div>
+      ${k === 'human' ? `<button class="chip ${S.spin.prep ? 'on' : ''}" data-spin-prep>🥡 Meal prep</button><button class="chip ${S.spin.adv ? 'on' : ''}" data-spin-adv>✨ Something new</button>` : ''}</div>
     <div class="spin-wrap">
       ${pool.length >= 2 ? `<div class="wheel-box"><div class="pointer"></div><canvas id="wheel" aria-label="Recipe wheel"></canvas></div>
         <button class="btn spin-btn" id="spin-go">🎰 Spin</button>
@@ -259,6 +277,8 @@ function bindSpin() {
   if (easy) easy.onclick = () => { S.spin.easy = !S.spin.easy; S.spin.res = null; render(); };
   const prep = document.querySelector('[data-spin-prep]');
   if (prep) prep.onclick = () => { S.spin.prep = !S.spin.prep; S.spin.res = null; render(); };
+  const adv = document.querySelector('[data-spin-adv]');
+  if (adv) adv.onclick = () => { S.spin.adv = !S.spin.adv; if (S.spin.adv) S.spin.human = 'All'; S.spin.res = null; render(); };
   const cv = $('#wheel');
   if (cv) {
     wheel = new Wheel(cv, { ticks: true });
@@ -391,6 +411,7 @@ function bind(v) {
   v.querySelectorAll('[data-open]').forEach(b => b.onclick = () => openRecipe(b.dataset.open));
   v.querySelectorAll('[data-course]').forEach(b => b.onclick = () => { S.course = b.dataset.course; render(); });
   const pc = v.querySelector('[data-prep]'); if (pc) pc.onclick = () => { S.prep = !S.prep; render(); };
+  const ac = v.querySelector('[data-adv]'); if (ac) ac.onclick = () => { S.adv = !S.adv; render(); };
   const ec = v.querySelector('[data-easy]'); if (ec) ec.onclick = () => { S.lvl = S.lvl === 'Easy' ? '' : 'Easy'; render(); };
   v.querySelectorAll('[data-group]').forEach(b => b.onclick = () => { S.group = b.dataset.group; save(); render(); });
   [['#f-cui', 'cui'], ['#f-lvl', 'lvl'], ['#f-tag', 'tag']].forEach(([sel, k]) => { const e = v.querySelector(sel); if (e) e.onchange = () => { S[k] = e.value; render(); }; });
@@ -421,7 +442,7 @@ function bind(v) {
   if (fq) fq.oninput = () => { S.foodQ = fq.value; $('#food-list').innerHTML = foodRows(); };
 }
 function act(a) {
-  if (a === 'clear-filters') { S.course = 'All'; S.cui = ''; S.lvl = ''; S.tag = ''; S.q = ''; S.prep = false; render(); return; }
+  if (a === 'clear-filters') { S.course = 'All'; S.cui = ''; S.lvl = ''; S.tag = ''; S.q = ''; S.prep = false; S.adv = false; render(); return; }
   if (a === 'share-wish' || a === 'copy-wish') {
     const text = wishText();
     if (a === 'share-wish' && navigator.share) navigator.share({ title: 'Simmer — recipes to add', text }).catch(() => {});
@@ -471,6 +492,7 @@ function drawRecipe() {
   openSheet(`
     <div class="hero"><div class="emo">${esc(r.emoji || '🍽️')}</div><div><h1>${esc(r.title)}</h1>
       <div class="meta"><span>⏱ ${r.time} min${r.wait ? ' + ' + esc(r.wait) : ''}</span><span>${esc(courseLabel(courseOf(r)))}</span><span>${LEVEL_ICON[r.level || 'Easy']} ${r.level || 'Easy'}</span>${cuisineOf(r) ? `<span>${cuisineOf(r).emoji} ${esc(cuisineOf(r).name)}</span>` : ''}</div></div></div>
+    ${r.wow ? `<div class="wowline">✨ <b>Why try it:</b> ${esc(r.wow)}</div>` : ''}
     <p style="margin:0">${esc(r.blurb || '')}</p>
     ${r.rating ? `<div class="srcline"><span class="rate">${'★'.repeat(Math.round(r.rating))}</span> <strong>${r.rating.toFixed(1)}</strong> from ${r.ratings.toLocaleString()} ratings on ${esc(r.source.site)}
       · <a href="${esc(r.source.url)}" target="_blank" rel="noopener">original recipe ↗</a></div>` : ''}
